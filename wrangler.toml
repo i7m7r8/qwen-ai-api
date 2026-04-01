@@ -1,4 +1,5 @@
 name = "qwen-ai-api"
+main = "src/index.js"
 compatibility_date = "2026-01-01"
 
 [ai]
