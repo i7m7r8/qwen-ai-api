@@ -2,8 +2,15 @@ name = "qwen-ai-api"
 main = "src/index.js"
 compatibility_date = "2026-01-01"
 
+# Workers AI binding
 [ai]
 binding = "AI"
 
+# Environment variables (can be overridden in GitHub Actions)
 [vars]
 EXA_API_KEY = ""
+
+# Optional: Specify route if using custom domain
+# [[routes]]
+# pattern = "api.example.com/*"
+# zone_name = "example.com"
