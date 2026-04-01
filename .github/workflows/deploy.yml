@@ -3,11 +3,11 @@ name: Deploy Cloudflare Worker
 on:
   push:
     branches:
-      - main  # Deploy on push to main branch
+      - main
   pull_request:
     branches:
-      - main  # Optional: test on PRs
-  workflow_dispatch:  # Allow manual trigger
+      - main
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -27,15 +27,14 @@ jobs:
 
       - name: Deploy to Cloudflare Workers
         env:
+          # Wrangler reads these env vars automatically [[1]]
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Optional: Inject runtime variables
+          EXA_API_KEY: ""
         run: |
           echo "Deploying Worker..."
-          wrangler deploy \
-            --api-token "$CLOUDFLARE_API_TOKEN" \
-            --account-id "$CLOUDFLARE_ACCOUNT_ID" \
-            --name qwen-ai-api \
-            --var EXA_API_KEY:""
-          
+          # Wrangler auto-detects CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID env vars
+          # No need for --api-token or --account-id flags [[1]]
+          wrangler deploy --name qwen-ai-api --var EXA_API_KEY:""
           echo "✅ Deployment complete!"
-          echo "Worker URL: https://qwen-ai-api.${{ vars.CF_SUBDOMAIN || 'imrannn68d-de2' }}.workers.dev"
