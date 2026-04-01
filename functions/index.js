@@ -1,11 +1,11 @@
 /**
  * Cloudflare Pages Functions — Qwen AI API
- * Entry point: functions/index.js [[15]]
- * Uses Workers AI binding: context.env.AI.run() [[23]]
+ * Entry point: functions/index.js
+ * Uses Workers AI binding: context.env.AI.run()
  */
 
 export async function onRequest(context) {
-  const { request, env, next } = context;
+  const { request, env } = context;
   const url = new URL(request.url);
 
   const jsonHeaders = { 
@@ -29,21 +29,21 @@ export async function onRequest(context) {
     });
   }
 
-  // Debug endpoint [[15]]
+  // Debug endpoint
   if (url.pathname === "/debug") {
     return new Response(JSON.stringify({
-      ai_binding: !!(env.AI),  // Check if AI binding is connected
+      ai_binding: !!(env.AI),
       model: "@cf/qwen/qwen3-30b-a3b-fp8",
-      pages_functions: true    }), { headers: jsonHeaders });
+      pages_functions: true
+    }), { headers: jsonHeaders });
   }
 
-  // OpenAI-compatible model listing
+  // OpenAI-compatible model listing - FIXED: added "data:" key
   if (url.pathname === "/v1/models" || url.pathname === "/models") {
     return new Response(JSON.stringify({
       object: "list",
-       [{
-        id: "qwen3-30b-a3b-fp8",
-        object: "model",
+      data: [{  // ← FIXED: Added "data:" key before array
+        id: "qwen3-30b-a3b-fp8",        object: "model",
         owned_by: "qwen"
       }]
     }), { headers: jsonHeaders });
@@ -68,7 +68,7 @@ export async function onRequest(context) {
 
   const wantsStream = body.stream === true;
   
-  // Normalize messages - support both OpenAI format and simple prompt
+  // Normalize messages
   let messages = body.messages;
   if (!messages && body.prompt) {
     messages = [{ role: "user", content: body.prompt }];
@@ -77,24 +77,24 @@ export async function onRequest(context) {
     messages = [{ role: "user", content: "Hello" }];
   }
 
-  // Check AI binding exists [[15]]
+  // Check AI binding exists
   if (!env.AI) {
     return new Response(JSON.stringify({
       error: { 
         message: "AI binding not configured. Go to Cloudflare Dashboard > Pages > qwen-ai-api > Settings > Bindings > Add > Workers AI",
         type: "config_error" 
-      }    }), { status: 500, headers: jsonHeaders });
+      }
+    }), { status: 500, headers: jsonHeaders });
   }
 
   const id = "chatcmpl-" + Date.now();
   const created = Math.floor(Date.now() / 1000);
 
-  // STREAMING MODE [[23]]
+  // STREAMING MODE
   if (wantsStream) {
-    try {
-      const stream = await env.AI.run("@cf/qwen/qwen3-30b-a3b-fp8", {
+    try {      const stream = await env.AI.run("@cf/qwen/qwen3-30b-a3b-fp8", {
         messages: messages,
-        stream: true  // Enable streaming
+        stream: true
       });
       return new Response(stream, { headers: sseHeaders });
     } catch (err) {
@@ -105,7 +105,7 @@ export async function onRequest(context) {
     }
   }
 
-  // NON-STREAMING MODE [[23]]
+  // NON-STREAMING MODE
   try {
     const response = await env.AI.run("@cf/qwen/qwen3-30b-a3b-fp8", {
       messages: messages
@@ -132,7 +132,8 @@ export async function onRequest(context) {
       }
     }), { headers: jsonHeaders });
     
-  } catch (err) {    return new Response(JSON.stringify({
+  } catch (err) {
+    return new Response(JSON.stringify({
       error: { message: err.message, type: "ai_error" }
     }), { status: 500, headers: jsonHeaders });
   }
