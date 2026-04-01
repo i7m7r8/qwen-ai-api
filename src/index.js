@@ -1,62 +1,51 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const jsonHeaders = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" };
-    const sseHeaders = { "Content-Type": "text/event-stream", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-cache" };
-
+    const headers = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" };
+    
     // CORS
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "POST, GET, OPTIONS", "Access-Control-Allow-Headers": "Content-Type, Authorization" } });
     }
-
+    
+    // Debug endpoint
+    if (url.pathname === "/debug" && request.method === "GET") {
+      return new Response(JSON.stringify({ ai_binding: !!env.AI, status: "ok" }), { headers });
+    }
+    
+    // Model listing - FIXED: added "data:" key before array
+    if ((url.pathname === "/v1/models" || url.pathname === "/models") && request.method === "GET") {
+      return new Response(JSON.stringify({ object: "list", data: [{ id: "qwen3-30b-a3b-fp8", object: "model", owned_by: "qwen" }] }), { headers });
+    }
+    
     // POST = chat completion
     if (request.method === "POST") {
-      let body = {};
-      try { const t = await request.text(); if (t) body = JSON.parse(t); } catch (e) { return new Response(JSON.stringify({error:"Invalid JSON"}), {status:400,headers:jsonHeaders}); }
-      const stream = body.stream === true;
-      const messages = body.messages || (body.prompt ? [{role:"user",content:body.prompt}] : [{role:"user",content:"Hello"}]);
-      
-      if (!env.AI) return new Response(JSON.stringify({error:{message:"AI binding not configured. Add Workers AI binding in Dashboard."}}), {status:500,headers:jsonHeaders});
-      
-      const id = body.id || "chatcmpl-"+Date.now();
-      const created = body.created || Math.floor(Date.now()/1000);
-      
-      // Try Llama 4 Scout first, fallback to Qwen3 if unavailable
-      const MODELS = ["@cf/meta/llama-4-scout-17b-16e-instruct", "@cf/qwen/qwen3-30b-a3b-fp8", "@cf/qwen/qwen2.5-coder-32b-instruct"];
-      let lastError = null;
-      
-      for (const MODEL of MODELS) {
-        try {
-          if (stream) {
-            const s = await env.AI.run(MODEL, {messages, stream:true, max_tokens:4096, temperature:0.7});
-            return new Response(s, {headers:sseHeaders});
-          } else {
-            const r = await env.AI.run(MODEL, {messages, max_tokens:4096, temperature:0.7});
-            let c = "";
-            if (r && r.response) c = r.response;
-            else if (r && r.result && r.result.response) c = r.result.response;
-            else if (r && Array.isArray(r.output)) c = r.output.map(o=>o.text||o.content||"").join("\n");
-            else if (typeof r === "string") c = r;
-            return new Response(JSON.stringify({id,object:"chat.completion",created,model:MODEL.split("/").pop(),choices:[{index:0,message:{role:"assistant",content:c||""},finish_reason:"stop"}],usage:{prompt_tokens:0,completion_tokens:0,total_tokens:0}}), {headers:jsonHeaders});
-          }
-        } catch (err) {
-          lastError = err.message;
-          // Continue to next model if this one fails
-          continue;
-        }
+      if (!env.AI) {
+        return new Response(JSON.stringify({ error: "AI binding not connected" }), { status: 500, headers });
       }
       
-      // All models failed
-      return new Response(JSON.stringify({error:{message:"All models failed: "+lastError, tried:MODELS}}), {status:500,headers:jsonHeaders});
+      let body = {};
+      try { const t = await request.text(); if (t) body = JSON.parse(t); } catch (e) { return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers }); }
+      
+      const messages = body.messages || (body.prompt ? [{ role: "user", content: body.prompt }] : [{ role: "user", content: "Hello" }]);
+      const stream = body.stream === true;
+      const MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
+      
+      if (stream) {
+        try {
+          const s = await env.AI.run(MODEL, { messages, stream: true });
+          return new Response(s, { headers: { "Content-Type": "text/event-stream", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-cache" } });
+        } catch (err) { return new Response(JSON.stringify({ error: err.message }), { status: 500, headers }); }
+      }
+      
+      try {
+        const r = await env.AI.run(MODEL, { messages });
+        const content = r?.response || r?.result?.response || "";
+        return new Response(JSON.stringify({ id: "chatcmpl-" + Date.now(), object: "chat.completion", created: Math.floor(Date.now()/1000), model: "qwen3-30b-a3b-fp8", choices: [{ index: 0, message: { role: "assistant", content: content }, finish_reason: "stop" }], usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } }), { headers });
+      } catch (err) { return new Response(JSON.stringify({ error: err.message }), { status: 500, headers }); }
     }
-
-    // GET endpoints
-    if (request.method === "GET") {
-      if (url.pathname === "/debug") return new Response(JSON.stringify({ai_binding:!!env.AI, available_models:["@cf/meta/llama-4-scout-17b-16e-instruct","@cf/qwen/qwen3-30b-a3b-fp8"], fallback_enabled:true}), {headers:jsonHeaders});
-      if (url.pathname === "/v1/models" || url.pathname === "/models") return new Response(JSON.stringify({object:"list",[{id:"llama-4-scout",object:"model",owned_by:"meta"}]}), {headers:jsonHeaders});
-      if (url.pathname === "/") return new Response(JSON.stringify({status:"ok"}), {headers:jsonHeaders});
-    }
-
-    return new Response(JSON.stringify({error:"Not found"}), {status: request.method==="GET"?404:405, headers:jsonHeaders});
+    
+    // Default response
+    return new Response(JSON.stringify({ status: "ok" }), { headers });
   }
 };
