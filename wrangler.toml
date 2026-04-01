@@ -1,7 +1,6 @@
 name = "qwen-ai-api"
 compatibility_date = "2026-01-01"
 
-# Workers AI Binding for Pages Functions [[15]]
 [ai]
 binding = "AI"
 
