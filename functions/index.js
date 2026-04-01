@@ -1,7 +1,7 @@
 /**
  * Cloudflare Pages Functions — Llama 4 Scout API
  * Model: @cf/meta/llama-4-scout-17b-16e-instruct
- * 17B params, 16 experts (MoE), 128K context
+ * OpenAI-compatible: /v1/chat/completions endpoint
  */
 
 export async function onRequest(context) {
@@ -43,20 +43,32 @@ export async function onRequest(context) {
     return new Response(JSON.stringify({
       object: "list",
       data: [{
-        id: "llama-4-scout",        object: "model",
-        owned_by: "meta"
+        id: "llama-4-scout",
+        object: "model",        owned_by: "meta"
       }]
     }), { headers: jsonHeaders });
   }
 
-  // Only handle POST for chat completions
-  if (request.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), { 
-      status: 405, 
-      headers: jsonHeaders 
-    });
+  // ✅ Handle OpenAI-compatible chat completions endpoint
+  // Qwen Code calls: POST /v1/chat/completions
+  if (url.pathname === "/v1/chat/completions" || url.pathname === "/chat/completions") {
+    return handleChatCompletion(request, env, jsonHeaders, sseHeaders);
   }
 
+  // ✅ Handle root path POST (fallback)
+  if (url.pathname === "/" && request.method === "POST") {
+    return handleChatCompletion(request, env, jsonHeaders, sseHeaders);
+  }
+
+  // Method not allowed for other paths/methods
+  return new Response(JSON.stringify({ error: "Method not allowed" }), { 
+    status: 405, 
+    headers: jsonHeaders 
+  });
+}
+
+// ✅ Helper function to handle chat completion logic
+async function handleChatCompletion(request, env, jsonHeaders, sseHeaders) {
   // Parse request body
   let body = {};
   try {
@@ -81,17 +93,17 @@ export async function onRequest(context) {
   }
 
   // Check AI binding exists
-  if (!env.AI) {
-    return new Response(JSON.stringify({
+  if (!env.AI) {    return new Response(JSON.stringify({
       error: { message: "AI binding not configured" }
     }), { status: 500, headers: jsonHeaders });
   }
 
-  const id = "chatcmpl-" + Date.now();
-  const created = Math.floor(Date.now() / 1000);
+  const id = body.id || "chatcmpl-" + Date.now();
+  const created = body.created || Math.floor(Date.now() / 1000);
 
   // LLAMA 4 SCOUT MODEL
   const MODEL_NAME = "@cf/meta/llama-4-scout-17b-16e-instruct";
+
   // STREAMING MODE
   if (wantsStream) {
     try {
@@ -130,8 +142,7 @@ export async function onRequest(context) {
     }
 
     return new Response(JSON.stringify({
-      id: id,
-      object: "chat.completion",
+      id: id,      object: "chat.completion",
       created: created,
       model: "llama-4-scout",
       choices: [{
@@ -141,7 +152,8 @@ export async function onRequest(context) {
       }],
       usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
     }), { headers: jsonHeaders });
-      } catch (err) {
+    
+  } catch (err) {
     return new Response(JSON.stringify({
       error: { message: err.message || "AI error" }
     }), { status: 500, headers: jsonHeaders });
