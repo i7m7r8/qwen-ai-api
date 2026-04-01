@@ -1,7 +1,6 @@
 /**
  * Cloudflare Pages Functions — Llama 4 Scout API
- * Model: @cf/meta/llama-4-scout-17b-16e-instruct
- * OpenAI-compatible: /v1/chat/completions endpoint
+ * Catch-all POST handler: ANY POST → chat completion
  */
 
 export async function onRequest(context) {
@@ -18,7 +17,7 @@ export async function onRequest(context) {
     "Cache-Control": "no-cache"
   };
 
-  // Handle CORS preflight
+  // ✅ CORS: Handle for ALL paths/methods
   if (request.method === "OPTIONS") {
     return new Response(null, {
       headers: {
@@ -29,47 +28,50 @@ export async function onRequest(context) {
     });
   }
 
-  // Debug endpoint
-  if (url.pathname === "/debug") {
-    return new Response(JSON.stringify({
-      ai_binding: !!(env.AI),
-      model: "@cf/meta/llama-4-scout-17b-16e-instruct",
-      pages_functions: true
-    }), { headers: jsonHeaders });
-  }
-
-  // OpenAI-compatible model listing
-  if (url.pathname === "/v1/models" || url.pathname === "/models") {
-    return new Response(JSON.stringify({
-      object: "list",
-      data: [{
-        id: "llama-4-scout",
-        object: "model",        owned_by: "meta"
-      }]
-    }), { headers: jsonHeaders });
-  }
-
-  // ✅ Handle OpenAI-compatible chat completions endpoint
-  // Qwen Code calls: POST /v1/chat/completions
-  if (url.pathname === "/v1/chat/completions" || url.pathname === "/chat/completions") {
+  // ✅ CATCH-ALL: Handle ANY POST request as chat completion
+  // This must come BEFORE specific pathname checks
+  if (request.method === "POST") {
     return handleChatCompletion(request, env, jsonHeaders, sseHeaders);
   }
 
-  // ✅ Handle root path POST (fallback)
-  if (url.pathname === "/" && request.method === "POST") {
-    return handleChatCompletion(request, env, jsonHeaders, sseHeaders);
+  // GET endpoints (only after POST catch-all)
+  if (request.method === "GET") {
+    // Debug endpoint
+    if (url.pathname === "/debug") {
+      return new Response(JSON.stringify({
+        ai_binding: !!(env.AI),
+        model: "@cf/meta/llama-4-scout-17b-16e-instruct",
+        pages_functions: true
+      }), { headers: jsonHeaders });
+    }
+        // Model listing
+    if (url.pathname === "/v1/models" || url.pathname === "/models") {
+      return new Response(JSON.stringify({
+        object: "list",
+         [{
+          id: "llama-4-scout",
+          object: "model",
+          owned_by: "meta"
+        }]
+      }), { headers: jsonHeaders });
+    }
+    
+    // Root GET
+    if (url.pathname === "/") {
+      return new Response(JSON.stringify({ status: "ok", model: "llama-4-scout" }), { headers: jsonHeaders });
+    }
   }
 
-  // Method not allowed for other paths/methods
-  return new Response(JSON.stringify({ error: "Method not allowed" }), { 
-    status: 405, 
+  // Default 404 for unmatched GET, 405 for other methods
+  const status = request.method === "GET" ? 404 : 405;
+  return new Response(JSON.stringify({ error: "Not found" }), { 
+    status: status, 
     headers: jsonHeaders 
   });
 }
 
-// ✅ Helper function to handle chat completion logic
+// Chat completion handler (called for ANY POST)
 async function handleChatCompletion(request, env, jsonHeaders, sseHeaders) {
-  // Parse request body
   let body = {};
   try {
     const text = await request.text();
@@ -83,7 +85,6 @@ async function handleChatCompletion(request, env, jsonHeaders, sseHeaders) {
 
   const wantsStream = body.stream === true;
   
-  // Normalize messages
   let messages = body.messages;
   if (!messages && body.prompt) {
     messages = [{ role: "user", content: body.prompt }];
@@ -92,19 +93,16 @@ async function handleChatCompletion(request, env, jsonHeaders, sseHeaders) {
     messages = [{ role: "user", content: "Hello" }];
   }
 
-  // Check AI binding exists
-  if (!env.AI) {    return new Response(JSON.stringify({
-      error: { message: "AI binding not configured" }
-    }), { status: 500, headers: jsonHeaders });
+  if (!env.AI) {    return new Response(JSON.stringify({ error: { message: "AI binding not configured" } }), { 
+      status: 500, 
+      headers: jsonHeaders 
+    });
   }
 
   const id = body.id || "chatcmpl-" + Date.now();
   const created = body.created || Math.floor(Date.now() / 1000);
-
-  // LLAMA 4 SCOUT MODEL
   const MODEL_NAME = "@cf/meta/llama-4-scout-17b-16e-instruct";
 
-  // STREAMING MODE
   if (wantsStream) {
     try {
       const stream = await env.AI.run(MODEL_NAME, {
@@ -115,13 +113,13 @@ async function handleChatCompletion(request, env, jsonHeaders, sseHeaders) {
       });
       return new Response(stream, { headers: sseHeaders });
     } catch (err) {
-      return new Response(JSON.stringify({ 
-        error: { message: err.message || "Streaming error" } 
-      }), { status: 500, headers: jsonHeaders });
+      return new Response(JSON.stringify({ error: { message: err.message || "Streaming error" } }), { 
+        status: 500, 
+        headers: jsonHeaders 
+      });
     }
   }
 
-  // NON-STREAMING MODE
   try {
     const response = await env.AI.run(MODEL_NAME, {
       messages: messages,
@@ -129,33 +127,28 @@ async function handleChatCompletion(request, env, jsonHeaders, sseHeaders) {
       temperature: 0.7
     });
 
-    // Handle response formats
     let content = "";
-    if (response && response.response) {
-      content = response.response;
-    } else if (response && response.result && response.result.response) {
-      content = response.result.response;
-    } else if (response && Array.isArray(response.output)) {
-      content = response.output.map(o => o.text || o.content || "").join("\n");
-    } else if (typeof response === "string") {
-      content = response;
-    }
+    if (response && response.response) content = response.response;
+    else if (response && response.result?.response) content = response.result.response;
+    else if (Array.isArray(response?.output)) content = response.output.map(o => o.text || o.content || "").join("\n");
+    else if (typeof response === "string") content = response;
 
     return new Response(JSON.stringify({
-      id: id,      object: "chat.completion",
+      id: id,
+      object: "chat.completion",
       created: created,
       model: "llama-4-scout",
       choices: [{
         index: 0,
         message: { role: "assistant", content: content || "" },
         finish_reason: "stop"
-      }],
-      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+      }],      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
     }), { headers: jsonHeaders });
     
   } catch (err) {
-    return new Response(JSON.stringify({
-      error: { message: err.message || "AI error" }
-    }), { status: 500, headers: jsonHeaders });
+    return new Response(JSON.stringify({ error: { message: err.message || "AI error" } }), { 
+      status: 500, 
+      headers: jsonHeaders 
+    });
   }
 }
